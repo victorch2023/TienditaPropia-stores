@@ -1,0 +1,79 @@
+name: Deploy stores Pages (no CNAME)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [redeploy]
+  # Re-deploy when source repo may have changed (manual/dispatch preferred for secrets sync)
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-stores
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source (TienditaPropia1)
+        uses: actions/checkout@v4
+        with:
+          repository: victorch2023/TienditaPropia1
+          ref: main
+          path: srcapp
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: srcapp/package-lock.json
+
+      - name: Strip CNAME (never publish custom domain from this site)
+        run: rm -f srcapp/public/CNAME
+
+      - name: Install dependencies
+        working-directory: srcapp
+        run: npm ci
+
+      - name: Build
+        working-directory: srcapp
+        run: npm run build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_DEMO_MODE: ${{ secrets.VITE_DEMO_MODE }}
+          VITE_CULQI_PUBLIC_KEY: ${{ secrets.VITE_CULQI_PUBLIC_KEY }}
+          VITE_FUNCTIONS_URL: ${{ secrets.VITE_FUNCTIONS_URL }}
+
+      - name: Guard — dist must not contain CNAME
+        run: |
+          if [ -f srcapp/dist/CNAME ]; then
+            echo "ERROR: dist/CNAME present; refusing deploy that would bind custom domain"
+            exit 1
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: srcapp/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
